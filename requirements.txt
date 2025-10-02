@@ -4,6 +4,3 @@ scipy==1.11.1
 matplotlib==3.7.2
 Pillow==10.0.0
 pandas==2.0.3
-ultralytics==8.0.196
-dlib==19.24.2
-imutils==0.5.4
