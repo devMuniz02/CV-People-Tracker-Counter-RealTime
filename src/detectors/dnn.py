@@ -26,24 +26,23 @@ class DNNFaceDetector:
             config_path = "models/opencv_face_detector.pbtxt"
         
         # Verificar que existan los archivos
-        if not os.path.exists(model_path):
-            print(f"Advertencia: No se encontró el modelo DNN en {model_path}")
-            print("Descargando modelo por defecto...")
-            self._download_default_model()
-            
-        if not os.path.exists(config_path):
-            print(f"Advertencia: No se encontró la configuración DNN en {config_path}")
-        
+        self.available = True
+        if not os.path.exists(model_path) or not os.path.exists(config_path):
+            print(f"Advertencia: No se encontró el modelo/config DNN en {model_path} / {config_path}")
+            print("Coloca los archivos de modelo en la carpeta 'models/' para usar DNN.")
+            self.net = None
+            self.available = False
+            return
+
         try:
             # Cargar la red neuronal
             self.net = cv2.dnn.readNetFromTensorflow(model_path, config_path)
             print("Modelo DNN cargado exitosamente")
+            self.available = True
         except Exception as e:
             print(f"Error cargando modelo DNN: {e}")
-            print("Usando detección Haar como respaldo")
-            from .haar import HaarFaceDetector
             self.net = None
-            self.haar_detector = HaarFaceDetector()
+            self.available = False
     
     def _download_default_model(self):
         """Descargar modelo por defecto si no existe"""
@@ -63,9 +62,9 @@ class DNNFaceDetector:
         Returns:
             List de tuplas (x, y, w, h, confidence)
         """
-        if self.net is None:
-            # Usar Haar como respaldo
-            return self.haar_detector.detect_faces(frame)
+        if not self.available or self.net is None:
+            # Detector no disponible
+            return []
         
         h, w = frame.shape[:2]
         
@@ -104,6 +103,4 @@ class DNNFaceDetector:
     
     def get_method_name(self):
         """Retorna el nombre del método de detección"""
-        if self.net is None:
-            return "Haar (respaldo)"
-        return "DNN"
+        return "DNN" if getattr(self, 'available', False) else "DNN (unavailable)"

@@ -16,7 +16,7 @@
     },
     "session": {
         "duration_minutes": 15,
-        "location": "Cafetería UDEM",
+        "location": "Lab Robotica",
         "fps_limit": 30,
         "save_full_frames": true,
         "save_face_crops": true

@@ -161,6 +161,8 @@ captures/
 *.swp
 *.swo
 *~
+temp*.ipynb
+temp*.py
 
 # IDE and editor files
 .vscode/
@@ -219,3 +221,7 @@ docs/_build/
 *.backup
 *_backup.*
 backup_*/
+
+# Videos
+*.mp4
+*.mov

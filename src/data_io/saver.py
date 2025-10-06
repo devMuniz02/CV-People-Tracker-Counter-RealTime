@@ -148,10 +148,18 @@ class ImageSaver:
         # Crear copia del frame para anotar
         annotated_frame = frame.copy()
         
-        # Dibujar detecciones
+        # Dibujar detecciones (color por fuente: person_hog azul, mtcnn verde, default amarillo)
         for detection in detections:
             x, y, w, h = detection[:4]
-            cv2.rectangle(annotated_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            source = detection[5] if len(detection) > 5 else None
+            if source == 'person_hog':
+                color = (255, 0, 0)
+            elif source == 'mtcnn':
+                color = (0, 255, 0)
+            else:
+                color = (0, 255, 255)
+
+            cv2.rectangle(annotated_frame, (x, y), (x + w, y + h), color, 2)
         
         # Dibujar objetos trackeados
         for obj_id, obj_data in tracked_objects.items():

@@ -1,6 +1,17 @@
-opencv-python==4.8.1.78
-numpy==1.24.3
-scipy==1.11.1
-matplotlib==3.7.2
-Pillow==10.0.0
-pandas==2.0.3
+# Recomendado: Python 3.9–3.11
+opencv-python
+numpy
+scipy
+matplotlib
+Pillow
+pandas
+ipykernel
+
+# Detectores de rostro
+mediapipe
+
+# MTCNN y su stack (pines para evitar incompatibilidades con Keras 3)
+tensorflow-cpu
+keras
+mtcnn
+facenet_pytorch
