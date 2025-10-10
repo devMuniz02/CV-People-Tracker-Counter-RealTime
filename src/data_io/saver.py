@@ -27,10 +27,10 @@ class ImageSaver:
         if save_crops:
             self.crops_dir = self.output_dir / "captures" / "crops"
             self.crops_dir.mkdir(parents=True, exist_ok=True)
-        
-        if save_frames:
-            self.frames_dir = self.output_dir / "captures" / "frames"
-            self.frames_dir.mkdir(parents=True, exist_ok=True)
+        # Do not create a frames directory; we only keep crop evidence (IDs)
+        # (Frames folder creation was intentionally removed per project requirement.)
+        if not save_frames:
+            self.frames_dir = None
         
         # Control de guardado para evitar duplicados
         self.saved_persons = set()
@@ -57,37 +57,68 @@ class ImageSaver:
             return None
         
         x, y, w, h = rect
+
+        # Compensate for possible top panel added by the annotation UI
+        # Some display frames include a top info panel (black bar) that shifts
+        # the visual coordinates. Detect a dark horizontal band at the top of
+        # the provided frame and subtract its height from the crop Y coordinate
+        # (only if it seems present and y is below the band).
+        try:
+            offset = self._detect_top_panel_offset(frame)
+            if offset > 0:
+                # only adjust if y is greater than the offset (prevents negative coords)
+                y = max(0, y - offset)
+        except Exception:
+            # if detection fails, fall back to given rect
+            pass
         
-        # Validar coordenadas
-        if x < 0 or y < 0 or x + w > frame.shape[1] or y + h > frame.shape[0]:
+        # Clamp coordinates to image bounds (allow detections at edges)
+        x = max(0, int(x))
+        y = max(0, int(y))
+        w = max(0, int(min(w, frame.shape[1] - x)))
+        h = max(0, int(min(h, frame.shape[0] - y)))
+        if w == 0 or h == 0:
             return None
-        
-        # Extraer región del rostro con un pequeño margen
-        margin = 10
-        y1 = max(0, y - margin)
-        y2 = min(frame.shape[0], y + h + margin)
-        x1 = max(0, x - margin)
-        x2 = min(frame.shape[1], x + w + margin)
-        
-        face_crop = frame[y1:y2, x1:x2]
-        
-        if face_crop.size == 0:
+
+        # Expand crop region asymmetrically so ID features on clothing (below face)
+        # are more likely included. Use a smaller upward margin and a larger
+        # downward margin (toward torso). Horizontal margin is symmetric.
+        frac_h = 0.45  # horizontal margin as fraction of bbox
+        frac_up = 0.25  # upward margin as fraction of bbox height
+        frac_down = 1.25  # downward margin as fraction of bbox height (bigger)
+        min_margin = 20
+        max_margin = 600
+
+        horiz_margin = int(max(min_margin, min(max_margin, max(w, h) * frac_h)))
+        up_margin = int(max(min_margin, min(max_margin, h * frac_up)))
+        down_margin = int(max(min_margin, min(max_margin, h * frac_down)))
+
+        y1 = max(0, y - up_margin)
+        y2 = min(frame.shape[0], y + h + down_margin)
+        x1 = max(0, x - horiz_margin)
+        x2 = min(frame.shape[1], x + w + horiz_margin)
+
+        # We only save the expanded asymmetric crop (ID on clothing)
+        id_crop = frame[y1:y2, x1:x2]
+        if id_crop.size == 0:
             return None
-        
-        # Generar nombre de archivo
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds
+
+        # Generar nombre de archivo para el ID crop
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         confidence_str = f"_conf{confidence:.2f}" if confidence else ""
-        filename = f"{person_id}_{timestamp}{confidence_str}.jpg"
-        filepath = self.crops_dir / filename
-        
-        # Guardar imagen
+        id_filename = f"{person_id}_id_{timestamp}{confidence_str}.jpg"
+        id_path = self.crops_dir / id_filename
+
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.quality]
-        success = cv2.imwrite(str(filepath), face_crop, encode_params)
-        
-        if success:
+        try:
+            saved = cv2.imwrite(str(id_path), id_crop, encode_params)
+        except Exception:
+            saved = False
+
+        if saved:
             self.saved_persons.add(person_id)
-            return str(filepath)
-        
+            return str(id_path)
+
         return None
     
     def save_full_frame(self, frame, event_info=None):
@@ -101,28 +132,8 @@ class ImageSaver:
         Returns:
             Ruta del archivo guardado o None si no se guardó
         """
-        if not self.save_frames:
-            return None
-        
-        self.frame_counter += 1
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-        
-        # Agregar información del evento al nombre si está disponible
-        event_str = ""
-        if event_info:
-            if 'person_id' in event_info:
-                event_str += f"_p{event_info['person_id']}"
-            if 'event' in event_info:
-                event_str += f"_{event_info['event']}"
-        
-        filename = f"frame_{timestamp}{event_str}.jpg"
-        filepath = self.frames_dir / filename
-        
-        # Guardar imagen
-        encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.quality]
-        success = cv2.imwrite(str(filepath), frame, encode_params)
-        
-        return str(filepath) if success else None
+        # Full-frame saving disabled by project requirement; return None.
+        return None
     
     def save_annotated_frame(self, frame, detections, tracked_objects, save_interval=30):
         """
@@ -183,7 +194,10 @@ class ImageSaver:
         Args:
             max_files: Número máximo de archivos por directorio
         """
-        for directory in [self.crops_dir, self.frames_dir]:
+        dirs = [self.crops_dir]
+        if getattr(self, 'frames_dir', None):
+            dirs.append(self.frames_dir)
+        for directory in dirs:
             if not directory.exists():
                 continue
             
@@ -217,7 +231,7 @@ class ImageSaver:
             stats['crops_saved'] = len(crop_files)
             stats['total_size_mb'] += sum(f.stat().st_size for f in crop_files)
         
-        if self.frames_dir.exists():
+        if getattr(self, 'frames_dir', None) and self.frames_dir.exists():
             frame_files = list(self.frames_dir.glob("*.jpg"))
             stats['frames_saved'] = len(frame_files)
             stats['total_size_mb'] += sum(f.stat().st_size for f in frame_files)
@@ -226,3 +240,47 @@ class ImageSaver:
         stats['unique_persons_captured'] = len(self.saved_persons)
         
         return stats
+
+    def _detect_top_panel_offset(self, frame, max_search_frac=0.4, dark_thresh=40, var_thresh=100.0):
+        """
+        Detect a dark horizontal band at the top of the frame (UI info panel)
+
+        Args:
+            frame: BGR image (numpy array)
+            max_search_frac: fraction of height to scan from the top (e.g. 0.4)
+            dark_thresh: mean intensity threshold to consider row as dark
+            var_thresh: variance threshold to consider area uniform (low var)
+
+        Returns:
+            offset (int): number of pixels in top dark band (0 if none detected)
+        """
+        try:
+            import numpy as _np
+            import cv2 as _cv2
+            h = frame.shape[0]
+            max_search = min(h, int(h * float(max_search_frac)))
+            if max_search <= 0:
+                return 0
+
+            gray = _cv2.cvtColor(frame[:max_search, :, :], _cv2.COLOR_BGR2GRAY)
+
+            # compute mean intensity per row
+            row_means = _np.mean(gray, axis=1)
+            row_vars = _np.var(gray, axis=1)
+
+            # find initial consecutive rows that are dark and low variance
+            offset = 0
+            for i, (m, v) in enumerate(zip(row_means, row_vars)):
+                if m < dark_thresh and v < var_thresh:
+                    offset = i + 1
+                else:
+                    # stop when a non-dark/non-uniform row is found after we've seen some dark rows
+                    if offset > 0:
+                        break
+
+            # Heuristic: if offset is very small (<6 px), ignore it
+            if offset < 6:
+                return 0
+            return int(offset)
+        except Exception:
+            return 0

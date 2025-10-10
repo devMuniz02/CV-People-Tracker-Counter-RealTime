@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 class EventLogger:
-    def __init__(self, output_dir, location="UDEM", method="Haar"):
+    def __init__(self, output_dir, location="UDEM", method="mtcnn"):
         """
         Inicializa el logger de eventos
         
@@ -210,6 +210,6 @@ class SessionManager:
         # Crear estructura de directorios
         session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "captures" / "crops").mkdir(parents=True, exist_ok=True)
-        (session_dir / "captures" / "frames").mkdir(parents=True, exist_ok=True)
-        
+        # Do not create a frames directory: project stores only crop evidence (IDs)
+
         return session_dir

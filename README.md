@@ -11,6 +11,7 @@ Sistema inteligente de conteo de personas en tiempo real que detecta y rastrea i
 ## 🚀 Características Principales
 
 - ✅ **Detección de rostros**: Haar Cascade y DNN
+ - ✅ **Detección de rostros**: MTCNN (predeterminado) y DNN/Haar opcional
 - 🎯 **Tracking inteligente**: Evita conteos duplicados
 - ⏰ **Sesión de 15 minutos**: Con temporizador en pantalla
 - 📊 **Logging en tiempo real**: CSV con timestamps
@@ -100,7 +101,7 @@ Edita `config.json` para ajustar parámetros:
 ```json
 {
     "detection": {
-        "method": "haar",
+    "method": "mtcnn",
         "scale_factor": 1.1,
         "min_neighbors": 5,
         "confidence_threshold": 0.6
@@ -128,7 +129,7 @@ timestamp,person_id,event,total_count,location,method,notes
 - **`config.json`**: Configuración utilizada
 - **`session_report.txt`**: Resumen de la sesión
 - **`captures/crops/`**: Recortes de rostros detectados
-- **`captures/frames/`**: Frames completos con anotaciones
+<!-- frames folder not used -->
 
 ## 🔍 Métodos de Detección
 

@@ -64,7 +64,7 @@ Después de cada sesión encontrarás en `output/YYYYMMDD_HHMM_ubicacion/`:
 - **`session_report.txt`** - Resumen de la sesión
 - **`config.json`** - Configuración utilizada
 - **`captures/crops/`** - Recortes de rostros únicos
-- **`captures/frames/`** - Frames completos anotados
+<!-- frames folder not used -->
 
 ## 🔧 Ajustes Rápidos
 
@@ -84,7 +84,7 @@ Después de cada sesión encontrarás en `output/YYYYMMDD_HHMM_ubicacion/`:
 ```json
 {
     "detection": {
-        "method": "dnn",
+    "method": "mtcnn",
         "confidence_threshold": 0.7
     },
     "tracking": {

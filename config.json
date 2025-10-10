@@ -1,6 +1,6 @@
 {
     "detection": {
-        "method": "haar",
+        "method": "mtcnn",
         "haar_cascade_file": "haarcascade_frontalface_default.xml",
         "scale_factor": 1.1,
         "min_neighbors": 5,
