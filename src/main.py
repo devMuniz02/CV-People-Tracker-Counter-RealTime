@@ -7,13 +7,13 @@ y permite cambiar parámetros de detección antes de iniciar la sesión.
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog
-from pathlib import Path
 import time
 import cv2
 
 import sys
 import json
 import numpy as np
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -38,7 +38,6 @@ try:
             if not self.available or self.model is None:
                 return []
             try:
-                import cv2
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = self.model.detect_faces(rgb)
                 detections = []
@@ -81,7 +80,6 @@ class DlibFaceDetector:
         if not getattr(self, 'available', False):
             return []
         try:
-            import cv2
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             rects = self.detector(gray, 0)
             detections = []
@@ -102,7 +100,6 @@ class DlibFaceDetector:
 class PersonHOGDetector:
     def __init__(self):
         try:
-            import cv2
             self.hog = cv2.HOGDescriptor()
             self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
             self.available = True
@@ -114,7 +111,6 @@ class PersonHOGDetector:
         if not getattr(self, 'available', False):
             return []
         try:
-            import cv2
             img = frame.copy()
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             rects, weights = self.hog.detectMultiScale(gray, winStride=(8, 8), padding=(8, 8), scale=1.05)
@@ -143,7 +139,7 @@ class RetinaFaceDetector:
             results = self.api.detect_faces(frame)
             detections = []
             if isinstance(results, dict):
-                for k, v in results.items():
+                for _, v in results.items():
                     box = v.get('facial_area') if isinstance(v, dict) else None
                     conf = v.get('score', 0.0) if isinstance(v, dict) else 0.0
                     if box is None:
@@ -241,7 +237,7 @@ class PeopleCounterSystem:
             fps_limit = int(self.config.get('session', {}).get('fps_limit', 30) or 30)
             max_seconds = float(self.config.get('tracking', {}).get('max_disappeared_seconds', 2.0) or 2.0)
             computed_max = max(1, int(round(max_seconds * fps_limit)))
-            max_distance = int(self.config.get('tracking', {}).get('max_distance_threshold', 100) or 100)
+            max_distance = int(self.config.get('tracking', {}).get('max_distance_threshold', 10) or 10)
             self.tracker = _StubTracker(max_disappeared=computed_max, max_distance=max_distance)
             self.roi = _StubROI()
 
@@ -367,7 +363,14 @@ class PeopleCounterSystem:
                     cx, cy = obj_data['centroid']
                     cv2.circle(out, (int(cx), int(cy)), 4, (0, 128, 255), -1)
 
-        total_count = getattr(self.tracker, 'get_total_count', lambda: 0)()
+        # Prefer counting unique IDs seen by our internal matching logic if available
+        if hasattr(self, '_pc_seen_ids') and isinstance(self._pc_seen_ids, (set, list)):
+            try:
+                total_count = len(self._pc_seen_ids)
+            except Exception:
+                total_count = getattr(self.tracker, 'get_total_count', lambda: 0)()
+        else:
+            total_count = getattr(self.tracker, 'get_total_count', lambda: 0)()
         active_count = len(tracked_objects)
         # Build status lines (draw a single info box inside the top panel)
         try:
@@ -395,7 +398,7 @@ class PeopleCounterSystem:
             f"Personas Unicas: {total_count} | Activas: {active_count}",
             f"Transcurrido: {elapsed_str} | Restante: {remaining_str}",
             f"FPS: {disp_fps:.1f} | Metodo: {self.detector.get_method_name()}",
-            f"Ubicacion: Lab de robotica"
+            "Ubicacion: Lab de robotica"
         ]
 
         # Optionally include a short source label if provided
@@ -465,6 +468,37 @@ class PeopleCounterSystem:
         progress_fill = int(progress_width * progress)
         cv2.rectangle(out, (progress_x, progress_y), (progress_x + progress_fill, progress_y + progress_height), progress_color, -1)
 
+        # Draw 'no-detection' border zone overlay based on tracking.remove_on_border_margin
+        try:
+            try:
+                border_margin = int(self.config.get('tracking', {}).get('remove_on_border_margin', 40) or 40)
+            except Exception:
+                border_margin = 20
+            # Clamp border to reasonable size (not more than half of smallest dimension)
+            if h_img is not None and w_img is not None and border_margin > 0:
+                max_margin = min(h_img, w_img) // 2
+                border_margin = max(0, min(border_margin, max_margin))
+
+                overlay_zone = out.copy()
+                zone_color = (0, 0, 255)  # red
+                alpha_zone = 0.25
+
+                # top strip
+                if border_margin > 0:
+                    cv2.rectangle(overlay_zone, (0, 0), (w_img, border_margin), zone_color, -1)
+                    # bottom strip
+                    cv2.rectangle(overlay_zone, (0, max(0, h_img - border_margin)), (w_img, h_img), zone_color, -1)
+                    # left strip
+                    cv2.rectangle(overlay_zone, (0, 0), (border_margin, h_img), zone_color, -1)
+                    # right strip
+                    cv2.rectangle(overlay_zone, (max(0, w_img - border_margin), 0), (w_img, h_img), zone_color, -1)
+
+                    # Blend only the overlay area into the output
+                    cv2.addWeighted(overlay_zone, alpha_zone, out, 1 - alpha_zone, 0, out)
+        except Exception:
+            # If anything fails drawing the zone, ignore and return the frame as-is
+            pass
+
         return out
 
     def update_fps(self):
@@ -476,26 +510,147 @@ class PeopleCounterSystem:
             self.last_fps_time = current_time
 
     def process_detections(self, detections, frame):
+        # Convert incoming detections to rects and centroids
         rects = []
+        centroids = []
         for d in detections:
             try:
                 x = int(d[0]); y = int(d[1]); w = int(d[2]); h = int(d[3])
                 rects.append((x, y, w, h))
+                centroids.append((int(x + w/2), int(y + h/2)))
             except Exception:
                 continue
-        # Provide frame size when possible so tracker can detect leaving objects
+
+        # If tracker supports update(rects, frame_size) use it; otherwise perform distance-based matching
         try:
             h_img, w_img = frame.shape[:2]
-            tracked_objects = self.tracker.update(rects, frame_size=(h_img, w_img))
         except Exception:
-            tracked_objects = self.tracker.update(rects)
-        return tracked_objects
+            h_img, w_img = (None, None)
+
+        # Use internal distance-based matching to produce stable IDs across frames.
+        # We intentionally avoid delegating to self.tracker.update here so that
+        # ID assignment is consistent and based on centroid-distance to previous
+        # detections stored in this PeopleCounterSystem instance.
+
+        # Fallback: implement distance-based matching here to produce stable IDs
+        # We'll keep an internal mapping on the PeopleCounterSystem instance: _pc_objects
+        now = time.time()
+        max_seconds = float(self.config.get('tracking', {}).get('max_disappeared_seconds', 10.0) or 10.0)
+        # Use a tighter default matching distance to avoid merging nearby people.
+        max_distance = float(self.config.get('tracking', {}).get('max_distance_threshold', 10) or 10)
+        # Determine border margin early so we can ignore new detections inside it
+        try:
+            border_margin = int(self.config.get('tracking', {}).get('remove_on_border_margin', 20) or 20)
+        except Exception:
+            border_margin = 20
+        if not hasattr(self, '_pc_objects'):
+            # id -> {'rect':(x,y,w,h), 'centroid':(cx,cy), 'last_seen':ts}
+            self._pc_objects = {}
+            self._pc_next_id = 0
+            # set of unique ids seen during the session (used to compute Personas Unicas)
+            self._pc_seen_ids = set()
+
+        assigned_ids = set()
+        new_tracked = {}
+
+        # For each detection, find nearest existing object within max_distance
+        for rect, centroid in zip(rects, centroids):
+            cx, cy = centroid
+            best_id = None
+            best_dist = None
+            for oid, data in list(self._pc_objects.items()):
+                # ignore objects that timed out
+                if now - data.get('last_seen', 0.0) > max_seconds:
+                    continue
+                ox, oy = data['centroid']
+                dist = ((ox - cx) ** 2 + (oy - cy) ** 2) ** 0.5
+                if dist <= max_distance and (best_dist is None or dist < best_dist):
+                    best_dist = dist
+                    best_id = oid
+
+            if best_id is None:
+                # If detection centroid is inside the configured border margin (red zone),
+                # treat it as not a valid new detection (ignore it). This prevents
+                # creating a new persistent ID for objects appearing inside the
+                # no-detection border.
+                try:
+                    if h_img is not None and w_img is not None and border_margin and border_margin > 0:
+                        if (cx <= border_margin or cy <= border_margin or
+                                (w_img - 1 - cx) <= border_margin or (h_img - 1 - cy) <= border_margin):
+                            # skip creating a new id for this detection
+                            continue
+                except Exception:
+                    pass
+
+                # create new id
+                oid = self._pc_next_id
+                self._pc_next_id += 1
+                self._pc_objects[oid] = {'rect': rect, 'centroid': centroid, 'last_seen': now}
+                assigned_ids.add(oid)
+                # record unique id seen
+                try:
+                    self._pc_seen_ids.add(oid)
+                except Exception:
+                    pass
+                new_tracked[oid] = {'rect': (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]), 1.0), 'centroid': (int(cx), int(cy)), 'disappeared_frames': 0}
+            else:
+                # update existing object
+                self._pc_objects[best_id]['rect'] = rect
+                self._pc_objects[best_id]['centroid'] = centroid
+                self._pc_objects[best_id]['last_seen'] = now
+                assigned_ids.add(best_id)
+                r = rect
+                new_tracked[best_id] = {'rect': (int(r[0]), int(r[1]), int(r[2]), int(r[3]), 1.0), 'centroid': (int(cx), int(cy)), 'disappeared_frames': 0}
+
+        # Remove objects that either moved outside the frame or were last seen
+        # at/near the border (interpreted as having left the scene). We no
+        # longer remove objects purely by timeout here — objects remain
+        # available for matching as long as their last known centroid stays
+        # inside the frame away from the border. This makes re-entering the
+        # scene after briefly disappearing at the border create a new unique
+        # id (as requested).
+        #
+        # Configurable margin: number of pixels from the edge to consider the
+        # object as 'at the border'. It can be set in config under
+        # tracking.remove_on_border_margin. Default is 20 pixels.
+        try:
+            border_margin = int(self.config.get('tracking', {}).get('remove_on_border_margin', 20) or 20)
+        except Exception:
+            border_margin = 20
+
+        for oid, data in list(self._pc_objects.items()):
+            if oid in assigned_ids:
+                continue
+            # if we have frame size, check if centroid is outside frame -> consider left camera
+            if h_img is not None and w_img is not None:
+                ox, oy = data.get('centroid', (None, None))
+                if ox is None or oy is None:
+                    # can't reason about position, remove conservatively
+                    del self._pc_objects[oid]
+                    continue
+                # If centroid is completely outside image bounds -> remove
+                if ox < 0 or oy < 0 or ox >= w_img or oy >= h_img:
+                    del self._pc_objects[oid]
+                    continue
+                # If centroid is within border_margin of any edge, treat object as
+                # potentially leaving the scene. We remove it so that if it
+                # re-enters later it will be considered a new unique id.
+                if (ox <= border_margin or oy <= border_margin or
+                        (w_img - 1 - ox) <= border_margin or (h_img - 1 - oy) <= border_margin):
+                    del self._pc_objects[oid]
+                    continue
+            else:
+                # No frame size known: do not remove by timeout anymore; keep object
+                # so that matching will prefer closest id when available.
+                pass
+
+        return new_tracked
 
     def _filter_detections_by_size(self, detections):
         if not detections:
             return []
         min_size = tuple(self.config['detection'].get('min_size', (0, 0)))
-        max_size = tuple(self.config['detection'].get('max_size', (99999, 99999)))
+        max_size = tuple(self.config['detection'].get('max_size', (30, 30)))
         min_w, min_h = int(min_size[0]), int(min_size[1])
         max_w, max_h = int(max_size[0]), int(max_size[1])
         filtered = []
@@ -571,8 +726,8 @@ class PeopleCounterGUI:
         self.apply_clahe_var = tk.BooleanVar(value=False)
         self.apply_equalize_var = tk.BooleanVar(value=False)
         # Max size and coordinates for min/max boxes
-        self.max_w_var = tk.IntVar(value=40)
-        self.max_h_var = tk.IntVar(value=40)
+        self.max_w_var = tk.IntVar(value=50)
+        self.max_h_var = tk.IntVar(value=50)
         self.min_x_var = tk.IntVar(value=10)
         self.min_y_var = tk.IntVar(value=10)
         self.max_x_var = tk.IntVar(value=10)
@@ -808,8 +963,6 @@ class PeopleCounterGUI:
 
     def _install_packages_thread(self, packages):
         """Install packages using the same Python interpreter's pip and refresh availability."""
-        import sys
-        import subprocess
         failures = []
         for pkg in packages:
             try:
@@ -930,7 +1083,6 @@ class PeopleCounterGUI:
             }
 
         # Use zero elapsed/remaining for display
-        from datetime import timedelta, datetime
         elapsed = timedelta(0)
         remaining = timedelta(0)
 
@@ -1002,7 +1154,7 @@ class PeopleCounterGUI:
             self._apply_config_to_system(self.system)
             self._set_status('Parámetros aplicados', 'green')
         except Exception as e:
-            self._set_status(f'Error aplicando parámetros: {e}', 'red')
+            self._set_status('Error aplicando parámetros: ' + str(e), 'red')
             return
 
         # Reprocess current frame to reflect changes
@@ -1021,13 +1173,12 @@ class PeopleCounterGUI:
                 self._set_status('Imagen anotada guardada', 'green')
             else:
                 # Fallback: save using OpenCV to session dir
-                import os
                 out_dir = Path(self.system.session_dir) if getattr(self.system, 'session_dir', None) else Path('output')
                 out_dir = Path(out_dir)
                 out_dir.mkdir(parents=True, exist_ok=True)
                 filename = out_dir / f'tuning_annotated_{int(time.time())}.jpg'
                 cv2.imwrite(str(filename), self.last_annotated)
-                self._set_status(f'Guardado: {filename}', 'green')
+                self._set_status('Guardado: ' + str(filename), 'green')
         except Exception as e:
             self._set_status(f'Error guardando: {e}', 'red')
 
@@ -1069,17 +1220,15 @@ class PeopleCounterGUI:
 
                 def patched_run():
                     # Producer-consumer: display at 30 FPS regardless of processing speed.
-                    import cv2
                     import queue
                     from datetime import datetime
-                    from pathlib import Path as _P
 
                     # Setup session (creates logger, image_saver, etc.)
                     self.system.setup_session()
 
                     video_path = getattr(self.system, 'video_path', None)
                     print('\n📹 Abriendo fuente de vídeo (GUI)...')
-                    if not video_path or not _P(video_path).exists():
+                    if not video_path or not Path(video_path).exists():
                         print('❌ No se seleccionó un archivo de vídeo válido')
                         return
 
