@@ -1,21 +1,23 @@
-"""
-__init__.py para el paquete tracking
-"""
+"""Public API for the tracking package.
 
+Exports core tracker class and helper utilities.
+"""
 from .centroid import CentroidTracker
 from .utils import (
-    calculate_centroid, 
-    calculate_distance, 
-    calculate_iou, 
+    calculate_centroid,
+    calculate_distance,
+    rect_overlap,
+    calculate_iou,
+    smooth_detections,
     RegionOfInterest,
-    smooth_detections
 )
 
 __all__ = [
-    'CentroidTracker', 
-    'calculate_centroid', 
-    'calculate_distance', 
-    'calculate_iou', 
-    'RegionOfInterest',
-    'smooth_detections'
+    "CentroidTracker",
+    "calculate_centroid",
+    "calculate_distance",
+    "rect_overlap",
+    "calculate_iou",
+    "smooth_detections",
+    "RegionOfInterest",
 ]
