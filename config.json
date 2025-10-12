@@ -1,39 +1,30 @@
 {
     "detection": {
         "method": "mtcnn",
-        "haar_cascade_file": "haarcascade_frontalface_default.xml",
         "scale_factor": 1.1,
         "min_neighbors": 5,
         "min_size": [20, 20],
         "max_size": [50, 50],
-        "dnn_model_path": "models/face_detection_model.caffemodel",
-        "dnn_config_path": "models/face_detection_model.prototxt",
-        "confidence_threshold": 0.6
+        "confidence_threshold": 0.7
     },
     "tracking": {
         "max_disappeared_frames": 60,
-        "max_disappeared_seconds": 120.0,
-        "remove_on_border": true,
+        "max_disappeared_seconds": 180.0,
         "remove_on_border_margin": 40,
-        "max_distance_threshold": 30,
-        "tracker_type": "centroid"
+        "max_distance_threshold": 30
     },
     "session": {
         "duration_minutes": 15,
         "location": "Lab Robotica",
         "fps_limit": 30,
-        "save_full_frames": true,
         "save_face_crops": true
     },
     "preprocessing": {
         "resize_width": 640,
-        "apply_blur": false,
-        "blur_kernel_size": 3,
         "apply_clahe": false
     },
     "output": {
         "base_path": "output",
-        "log_format": "csv",
         "image_quality": 95
     }
 }
